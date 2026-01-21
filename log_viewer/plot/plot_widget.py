@@ -177,9 +177,9 @@ class MultiAxisPlotWidget(QWidget):
         # Set up Y-axes
         self._setup_y_axes()
 
-        # Enable downsampling for performance
-        self.plot_item.setDownsampling(mode="peak")
-        self.plot_item.setClipToView(True)
+        # Enable downsampling for performance - DISABLED for debugging
+        # self.plot_item.setDownsampling(mode="peak")
+        # self.plot_item.setClipToView(True)
 
         layout.addWidget(self.plot_widget)
 
@@ -259,8 +259,8 @@ class MultiAxisPlotWidget(QWidget):
             self.vline.setPos(x)
             self.hline.setPos(y)
 
-            # Update readout
-            self._update_readout(x)
+            # Update readout with scene position for proper widget positioning
+            self._update_readout(x, pos)
 
             # Emit for sync
             self.crosshair_moved.emit(x)
@@ -290,7 +290,7 @@ class MultiAxisPlotWidget(QWidget):
             self.vline.setPen(pg.mkPen(color="#888", width=1, style=Qt.PenStyle.DashLine))
             self.hline.setPen(pg.mkPen(color="#888", width=1, style=Qt.PenStyle.DashLine))
 
-    def _update_readout(self, x_val: float):
+    def _update_readout(self, x_val: float, scene_pos=None):
         """Update the readout widget with values at x position."""
         values = {}
 
@@ -312,13 +312,29 @@ class MultiAxisPlotWidget(QWidget):
         self.readout.set_values(x_val, values)
 
         # Position readout near cursor but within bounds
-        pos = self.plot_item.vb.mapViewToScene(pg.Point(x_val, 0))
-        widget_pos = self.plot_widget.mapFromScene(pos)
-
-        x_pos = min(widget_pos.x() + 20, self.plot_widget.width() - self.readout.width() - 10)
-        y_pos = max(10, min(widget_pos.y(), self.plot_widget.height() - self.readout.height() - 10))
-
-        self.readout.move(int(x_pos), int(y_pos))
+        if scene_pos is not None:
+            # Map scene position to widget coordinates
+            widget_pos = self.plot_widget.mapFromScene(scene_pos)
+            
+            # Offset the readout to the right and below the cursor
+            x_pos = widget_pos.x() + 15
+            y_pos = widget_pos.y() + 10
+            
+            # Ensure readout stays within plot widget bounds
+            max_x = self.plot_widget.width() - self.readout.width() - 5
+            max_y = self.plot_widget.height() - self.readout.height() - 5
+            
+            # Adjust if readout would go outside bounds
+            if x_pos > max_x:
+                x_pos = widget_pos.x() - self.readout.width() - 15  # Place on left side
+            if y_pos > max_y:
+                y_pos = max_y
+            
+            # Ensure minimum position
+            x_pos = max(5, x_pos)
+            y_pos = max(5, y_pos)
+            
+            self.readout.move(int(x_pos), int(y_pos))
 
     def set_crosshair_x(self, x_val: float, emit_signal: bool = True):
         """Set crosshair X position (for sync from other plots)."""
@@ -397,15 +413,15 @@ class MultiAxisPlotWidget(QWidget):
                 # Determine which Y-axis to use
                 axis_num = settings.channel_axis_map.get(channel, 1) if self.is_primary else 1
 
-                # Create plot curve with downsampling
+                # Create plot curve
                 pen = pg.mkPen(color=color, width=1.5)
                 curve = pg.PlotDataItem(
                     x_clean, y_clean,
                     pen=pen,
                     name=channel,
-                    autoDownsample=True,
-                    downsampleMethod="peak",
-                    clipToView=True
+                    # Temporarily disable optimizations to fix rendering issue
+                    autoDownsample=False,
+                    clipToView=False
                 )
 
                 # Add to appropriate axis
@@ -485,3 +501,12 @@ class MultiAxisPlotWidget(QWidget):
         super().resizeEvent(event)
         if self.is_primary:
             self._update_views()
+
+    def showEvent(self, event):
+        """Handle show event to initialize view geometry."""
+        super().showEvent(event)
+        if self.is_primary:
+            # Delay the update slightly to ensure geometry is ready
+            from PySide6.QtCore import QTimer
+            QTimer.singleShot(0, self._update_views)
+
